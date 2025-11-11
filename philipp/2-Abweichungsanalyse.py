@@ -1,253 +1,377 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
 import os
-from sklearn.preprocessing import MinMaxScaler # Wichtig für den Trend-Vergleich
+from datetime import datetime
+import warnings
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
-# Setzt einen sauberen "Seaborn"-Stil für alle Plots
-sns.set_theme(style="whitegrid")
+warnings.filterwarnings("ignore")
 
-# --- Schritt 1: Bottom-up PROGNOSE (Stück) laden & aggregieren ---
 
-def load_and_aggregate_prognosis(raw_data_path="rohdaten.xlsx", prog_col='prog_mg1', date_col='progmo'):
+def load_rohdaten():
     """
-    Lädt die Rohdaten und aggregiert die Prognose-Stückzahlen (prog_col)
-    anhand der korrekten Datumspalte (date_col).
+    Lädt die Rohdaten aus rohdaten.xlsx
+
+    Returns:
+        pd.DataFrame: Rohdaten mit Bestellinformationen
     """
-    print(f"Lade Prognose: '{prog_col}' basierend auf Datum '{date_col}'...")
     try:
-        df_raw = pd.read_excel(raw_data_path)
-        # Erstelle Datumsobjekt aus der korrekten Prognosespalte (progmo oder progmo2)
-        df_raw['bedmo_date'] = pd.to_datetime(df_raw[date_col], format='%Y%m')
-    except Exception as e:
-        print(f"FEHLER beim Laden der Rohdaten ('{raw_data_path}'): {e}")
+        df_raw = pd.read_excel("rohdaten.xlsx")
+        print(
+            f"✅ Rohdaten geladen: {df_raw.shape[0]} Zeilen, {df_raw.shape[1]} Spalten"
+        )
+
+        return df_raw
+
+    except FileNotFoundError:
+        print("❌ Datei 'rohdaten.xlsx' nicht gefunden!")
+        print("🔍 Verfügbare Excel-Dateien:")
+        for file in os.listdir("."):
+            if file.endswith(".xlsx"):
+                print(f"   - {file}")
         return None
-        
-    # Aggregation: Summiere die Prognose-Stückzahlen
-    agg_definition = {
-        prog_col: "sum"
-    }
-    
-    df_prognosis = (
-        df_raw.groupby(["Baumarkt", "bedmo_date"])
-        .agg(agg_definition)
+
+    except Exception as e:
+        print(f"❌ Fehler beim Laden der Rohdaten: {e}")
+        return None
+
+
+def load_baumarktprogramm():
+    """
+    Lädt das Baumarktprogramm aus BAUMARKTPROGRAMM.xlsx
+
+    Returns:
+        pd.DataFrame: Baumarktprogramm-Daten mit Prognosen
+    """
+    try:
+        df = pd.read_excel("BAUMARKTPROGRAMM.xlsx")
+        print(
+            f"✅ Baumarktprogramm geladen: {df.shape[0]} Zeilen, {df.shape[1]} Spalten"
+        )
+
+        return df
+
+    except FileNotFoundError:
+        print("❌ Datei 'BAUMARKTPROGRAMM.xlsx' nicht gefunden!")
+        print("🔍 Verfügbare Excel-Dateien:")
+        for file in os.listdir("."):
+            if file.endswith(".xlsx"):
+                print(f"   - {file}")
+        return None
+
+    except Exception as e:
+        print(f"❌ Fehler beim Laden des Baumarktprogramms: {e}")
+        return None
+
+
+def agg_Rohdaten(data):
+    """
+    Aggregiert Rohdaten mit Integration der Prognosedaten.
+    Prognosemonate werden unter wavor_bstlmg angezeigt.
+    Bei doppelten Daten wird der größere Wert genommen.
+    """
+
+    # Schritt 1: Normale Bestelldaten aggregieren
+    bestelldaten_agg = (
+        data.groupby(["Baumarkt", "bedmo"]).agg({"wavor_bstlmg": "sum"}).reset_index()
+    )
+
+    # Schritt 2: Prognosedaten als zusätzliche 'bedmo' behandeln
+    prognose1 = (
+        data.groupby(["Baumarkt", "progmo"])
+        .agg({"prog_mg1": "sum"})
         .reset_index()
-        .rename(columns={prog_col: "Prognose_Stueck"})
+        .copy()
     )
-    
-    # Filtere leere Prognosen/Datumseinträge heraus
-    df_prognosis = df_prognosis[df_prognosis['Prognose_Stueck'] > 0]
-    
-    print(f"Prognose (Stück) erfolgreich aggregiert: {len(df_prognosis)} Zeilen.")
-    return df_prognosis
-
-# --- Schritt 2: Vertriebsplan (Euro) laden & transformieren (NEU) ---
-
-def load_sales_plan(plan_filepath="BAUMARKTPROGRAMM.xlsx"):
-    """
-    Lädt den komplexen Vertriebsplan (Kreuztabelle) und
-    transformiert ihn in ein "langes" Format (pro Baumarkt/Monat).
-    """
-    print(f"Lade Vertriebsplan (Euro) aus '{plan_filepath}'...")
-    try:
-        # Lade CSV mit Multi-Header (Zeile 1 = Jahr, Zeile 2 = Monat)
-        # Index_col=0 setzt 'Baumarkt' als Index
-        df_plan = pd.read_excel(plan_filepath)
-        
-        # 1. Bereinige Spalten: Entferne 'Ergebnis', 'Baureihe', etc.
-        cols_to_keep = [col for col in df_plan.columns if 'Ergebnis' not in col[1] and 'Baureihe' not in col[0] and 'Unnamed' not in col[0]]
-        df_plan = df_plan[cols_to_keep]
-
-        # 2. "Entpivoten" (Stacken):
-        # Stapel zuerst die Jahre (level=0)
-        df_stacked = df_plan.stack(level=0)
-        # Stapel dann die Monate (standardmäßig level=1)
-        df_stacked = df_stacked.stack()
-
-        # 3. In sauberen DataFrame umwandeln
-        df_long = df_stacked.reset_index()
-        df_long.columns = ['Baumarkt', 'Jahr', 'Monat', 'Plan_Umsatz']
-
-        # 4. Daten bereinigen:
-        # Entferne Tausender-Trennzeichen (Punkte) und wandle in Zahl um
-        df_long['Plan_Umsatz'] = df_long['Plan_Umsatz'].replace(r'\.', '', regex=True).astype(float)
-        
-        # Monate in Zahlen umwandeln
-        month_map = {
-            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAI': 5, 'JUN': 6,
-            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OKT': 10, 'NOV': 11, 'DEZ': 12
-        }
-        df_long['Monat_Num'] = df_long['Monat'].map(month_map)
-
-        # 5. Finale Datumspalte 'bedmo_date' erstellen
-        df_long['bedmo_date'] = pd.to_datetime(
-            df_long['Jahr'].astype(str) + '-' + df_long['Monat_Num'].astype(str) + '-01'
-        )
-        
-        # Nur relevante Spalten behalten
-        df_plan_agg = df_long[['Baumarkt', 'bedmo_date', 'Plan_Umsatz']]
-        
-    except Exception as e:
-        print(f"FEHLER beim Laden des Vertriebsplans: {e}")
-        print("Stellen Sie sicher, dass die Datei 'BAUMARKTPROGRAMM 2025-09(Kreuztabelle).csv' im selben Ordner liegt.")
-        return None
-        
-    print(f"Vertriebsplan (Euro) erfolgreich geladen und transformiert: {len(df_plan_agg)} Zeilen.")
-    return df_plan_agg
-
-# --- Schritt 3, 4 & 5: Vergleich, Abweichung & Visualisierung ---
-
-def compare_and_visualize_trends(df_prognosis, df_plan, output_dir, output_suffix, top_n=5):
-    """
-    Führt die beiden Datensätze zusammen, normalisiert die Trends (Stück vs. Euro),
-    berechnet die Abweichungen und visualisiert die auffälligsten.
-    output_suffix wird an Dateinamen angehängt (z.B. '_prog1' oder '_prog2')
-    """
-    print(f"Vergleiche Trends für {output_suffix}...")
-    
-    # 1. Zusammenführen der beiden Pläne (Aufgabe 1)
-    df_vergleich = pd.merge(
-        df_prognosis,
-        df_plan,
-        on=['Baumarkt', 'bedmo_date'],
-        how='inner' # 'inner' = nur Zeiträume, wo BEIDE Daten haben
+    prognose1 = prognose1.rename(
+        columns={"progmo": "bedmo", "prog_mg1": "wavor_bstlmg"}
     )
-    df_vergleich = df_vergleich.fillna(0)
-    
-    if df_vergleich.empty:
-        print(f"FEHLER für {output_suffix}: Kein Überlapp zwischen Prognose und Vertriebsplan gefunden.")
-        print("Bitte prüfen Sie die 'Baumarkt'-Namen und Zeiträume in beiden Dateien.")
-        return
 
-    # 2. Normalisieren (Die "Brücke" bauen)
-    scaler = MinMaxScaler()
-    all_scaled_dfs = []
-    
-    for baumarkt in df_vergleich['Baumarkt'].unique():
-        df_gruppe = df_vergleich[df_vergleich['Baumarkt'] == baumarkt].copy()
-        
-        # Skalierer anwenden auf die Spalten
-        df_gruppe[['Prognose_Trend', 'Plan_Trend']] = \
-            scaler.fit_transform(df_gruppe[['Prognose_Stueck', 'Plan_Umsatz']])
-            
-        all_scaled_dfs.append(df_gruppe)
-        
-    df_vergleich = pd.concat(all_scaled_dfs)
-    
-    # 3. Abweichung der Trends berechnen (Aufgabe 2)
-    df_vergleich['Trend_Abweichung'] = \
-        df_vergleich['Prognose_Trend'] - df_vergleich['Plan_Trend']
-        
-    print(f"Trend-Vergleich {output_suffix} abgeschlossen.")
-    df_vergleich.to_excel(os.path.join(output_dir, f"Abweichungsanalyse_Trends{output_suffix}.xlsx"), index=False)
-    
-    # 4. Visualisierung auffälliger Abweichungen (Aufgabe 3)
-    print(f"Erstelle Visualisierungen der Top {top_n} Abweichungen für {output_suffix}...")
+    prognose2 = (
+        data.groupby(["Baumarkt", "progmo2"])
+        .agg({"prog_mg2": "sum"})
+        .reset_index()
+        .copy()
+    )
+    prognose2 = prognose2.rename(
+        columns={"progmo2": "bedmo", "prog_mg2": "wavor_bstlmg"}
+    )
 
-    # Finde die Baumärkte mit der größten durchschnittlichen Abweichung
-    df_agg_abweichung = df_vergleich.groupby('Baumarkt')['Trend_Abweichung'].apply(lambda x: x.abs().mean()).reset_index()
-    df_agg_abweichung = df_agg_abweichung.sort_values(by='Trend_Abweichung', ascending=False)
-    
-    # Plotte die Top N Abweichler
-    for baumarkt in df_agg_abweichung.head(top_n)['Baumarkt']:
-        
-        df_plot = df_vergleich[df_vergleich['Baumarkt'] == baumarkt]
-        
-        df_melted = df_plot.melt(
-            id_vars=['Baumarkt', 'bedmo_date'],
-            value_vars=['Prognose_Trend', 'Plan_Trend'],
-            var_name='Datenquelle',
-            value_name='Normalisierter_Trend (0-1)'
+    # Schritt 3: Zusammenfügen (Bestellungen + Prognosen)
+    combined = pd.concat(
+        [bestelldaten_agg, prognose1, prognose2], ignore_index=True, sort=False
+    )
+
+    # Schritt 4: Fehlende oder ungültige Monate entfernen und Monat normalisieren
+    combined = combined.dropna(subset=["bedmo", "wavor_bstlmg"])
+
+    def _normalize_month(val):
+        try:
+            if isinstance(val, float) and np.isnan(val):
+                return np.nan
+            if isinstance(val, float):
+                # z.B. 202610.0 -> 202610
+                return int(val)
+            if isinstance(val, (int, np.integer)):
+                return int(val)
+            if isinstance(val, (pd.Timestamp, datetime)):
+                return int(val.strftime("%Y%m"))
+            s = str(val).strip()
+            if s.endswith(".0"):
+                s = s[:-2]
+            return int(s)
+        except Exception:
+            return np.nan
+
+    combined["bedmo"] = combined["bedmo"].apply(_normalize_month)
+    combined = combined.dropna(subset=["bedmo"])
+    combined["bedmo"] = combined["bedmo"].astype(int)
+
+    # Schritt 5: Bei doppelten Baumarkt/bedmo den größeren Wert nehmen
+    finale_daten = combined.groupby(["Baumarkt", "bedmo"], as_index=False).agg(
+        {"wavor_bstlmg": "max"}
+    )
+
+    # Schritt 6: Spalten umbenennen und sortieren
+    finale_daten = finale_daten.rename(
+        columns={"bedmo": "Monat", "wavor_bstlmg": "Zahl", "Baumarkt": "Baumarkt"}
+    )
+    finale_daten = finale_daten.sort_values(["Baumarkt", "Monat"]).reset_index(
+        drop=True
+    )
+
+    return finale_daten
+
+
+def agg_Baumarktprogramm(data):
+    """
+    Wandelt das BAUMARKTPROGRAMM-DataFrame in langes Format um:
+    Spalten: ['Baumarkt', 'Monat', 'Zahl']
+    Monat ist im Format JJJJMM (int). Fehlende Werte werden als 0 behandelt.
+    Mapping der Spaltenbereiche:
+      2025: E-P  (Index 4-15)
+      2026: R-AC (Index 17-28)
+      2027: AE-AP (Index 30-41)
+      2028: AR-BC (Index 43-54)
+    Entfernt Zeilen, bei denen die Baumarkt-Spalte den Text "Baumarkt" enthält.
+    """
+    if data is None or data.empty:
+        return pd.DataFrame(columns=["Baumarkt", "Monat", "Zahl"])
+
+    # Spaltenbereiche (Index)
+    spalten_mapping = {
+        "2025": list(range(4, 16)),  # E-P -> 4..15
+        "2026": list(range(17, 29)),  # R-AC -> 17..28
+        "2027": list(range(30, 42)),  # AE-AP -> 30..41
+        "2028": list(range(43, 55)),  # AR-BC -> 43..54
+    }
+
+    rows = []
+    # Annahme: erste Spalte enthält Baumarkt-Namen
+    for _, row in data.iterrows():
+        baumarkt = row.iloc[0]
+        if pd.isna(baumarkt):
+            continue
+        bname = str(baumarkt).strip()
+        if bname == "" or bname.lower() == "baumarkt":
+            continue
+        for jahr, indices in spalten_mapping.items():
+            for m_idx in range(12):
+                col_idx = indices[m_idx] if m_idx < len(indices) else None
+                wert = 0.0
+                if col_idx is not None and col_idx < len(row):
+                    val = row.iloc[col_idx]
+                    if pd.notna(val):
+                        try:
+                            wert = float(val)
+                        except Exception:
+                            try:
+                                wert = float(
+                                    str(val).replace(",", ".").replace(" ", "")
+                                )
+                            except Exception:
+                                wert = 0.0
+                monat_code = int(f"{jahr}{m_idx+1:02d}")
+                rows.append({"Baumarkt": bname, "Monat": monat_code, "Zahl": wert})
+
+    result = pd.DataFrame(rows, columns=["Baumarkt", "Monat", "Zahl"])
+    # Falls mehrere Zeilen für gleichen Baumarkt/Monat existieren, zusammenfassen (Summe)
+    result = result.groupby(["Baumarkt", "Monat"], as_index=False).agg({"Zahl": "sum"})
+    # Entferne eventuelle verbleibende Zeilen mit dem Wort "baumarkt"
+    result = result[
+        ~result["Baumarkt"].astype(str).str.strip().str.lower().eq("baumarkt")
+    ]
+    result = result.sort_values(["Baumarkt", "Monat"]).reset_index(drop=True)
+    return result
+
+
+def plot_vergleich_baumarkt(rohdaten_agg, baumarkt_prog, out_dir="./output/images"):
+    """
+    Vergleichsplots pro Baumarkt:
+    - Maßstab der Achsen ist angepasst
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Prüfung der benötigten Spalten
+    required = {"Baumarkt", "Monat", "Zahl"}
+    if not required.issubset(set(rohdaten_agg.columns)) or not required.issubset(
+        set(baumarkt_prog.columns)
+    ):
+        raise ValueError(
+            "Beide DataFrames müssen die Spalten 'Baumarkt', 'Monat' und 'Zahl' enthalten."
         )
-        
-        df_melted['Datenquelle'] = df_melted['Datenquelle'].replace({
-            'Prognose_Trend': f'Bottom-up Prognose (Stück-Trend {output_suffix})',
-            'Plan_Trend': 'Vertriebsplan (Euro-Trend)'
-        })
 
-        plt.figure(figsize=(15, 7))
-        sns.lineplot(
-            data=df_melted,
-            x='bedmo_date',
-            y='Normalisierter_Trend (0-1)',
-            hue='Datenquelle',
-            style='Datenquelle',
-            markers=True,
-            linewidth=2.5
+    # Alle Baumärkte aus beiden DataFrames
+    baumaerkte = sorted(
+        set(rohdaten_agg["Baumarkt"].dropna().unique()).union(
+            set(baumarkt_prog["Baumarkt"].dropna().unique())
         )
-        
-        
-        plt.title(f"Auffällige Abweichung {output_suffix}: Trend-Vergleich für Baumarkt {baumarkt}", fontsize=16)
-        plt.ylabel("Normalisierte Skala (0 = Min, 1 = Max)")
-        plt.xlabel("Monat")
-        plt.legend()
-        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-        
-        plt.savefig(os.path.join(output_dir, f"5_Trendvergleich{output_suffix}_{baumarkt}.png"))
-        plt.close()
+    )
 
-    print(f"Visualisierungen für {output_suffix} in '{output_dir}' gespeichert.")
+    def _to_datetime_month(series):
+        # robustes Konvertieren von Monat (JJJJMM) in datetime (erster Tag im Monat)
+        s = series.dropna().astype(str).str.strip()
+        s = s.str.replace(r"\.0$", "", regex=True)
+        s = s[s.str.match(r"^\d{6}$")]
+        # map back to original index
+        result = pd.to_datetime(
+            series.astype(str).str.replace(r"\.0$", "", regex=True),
+            format="%Y%m",
+            errors="coerce",
+        )
+        return result
 
-# --- Haupt-Logik ---
+    for bm in baumaerkte:
+        df_r = rohdaten_agg[rohdaten_agg["Baumarkt"] == bm][["Monat", "Zahl"]].copy()
+        df_p = baumarkt_prog[baumarkt_prog["Baumarkt"] == bm][["Monat", "Zahl"]].copy()
+
+        if df_r.empty and df_p.empty:
+            continue
+
+        # Monat -> datetime
+        df_r["Month_dt"] = (
+            _to_datetime_month(df_r["Monat"])
+            if not df_r.empty
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        df_p["Month_dt"] = (
+            _to_datetime_month(df_p["Monat"])
+            if not df_p.empty
+            else pd.Series(dtype="datetime64[ns]")
+        )
+
+        # Drop Zeilen ohne gültiges Datum
+        if not df_r.empty:
+            df_r = df_r.dropna(subset=["Month_dt"]).copy()
+        if not df_p.empty:
+            df_p = df_p.dropna(subset=["Month_dt"]).copy()
+
+        # gemeinsamer Zeitraum bestimmen
+        min_dt = None
+        max_dt = None
+        if not df_r.empty:
+            min_dt = df_r["Month_dt"].min()
+            max_dt = df_r["Month_dt"].max()
+        if not df_p.empty:
+            if min_dt is None or (df_p["Month_dt"].min() < min_dt):
+                min_dt = df_p["Month_dt"].min()
+            if max_dt is None or (df_p["Month_dt"].max() > max_dt):
+                max_dt = df_p["Month_dt"].max()
+
+        if min_dt is None or max_dt is None:
+            continue
+
+        # vollständige Monatsreihe
+        dates = pd.date_range(start=min_dt, end=max_dt, freq="MS")
+        df_full = pd.DataFrame({"Month_dt": dates})
+
+        # Merge und Serien erstellen (fehlende Monate -> 0)
+        series_r = (
+            pd.merge(df_full, df_r[["Month_dt", "Zahl"]], on="Month_dt", how="left")
+            .set_index("Month_dt")["Zahl"]
+            .fillna(0)
+            .astype(float)
+        )
+        series_p = (
+            pd.merge(df_full, df_p[["Month_dt", "Zahl"]], on="Month_dt", how="left")
+            .set_index("Month_dt")["Zahl"]
+            .fillna(0)
+            .astype(float)
+        )
+
+        # Skalierungsfaktor berechnen (auf Basis des Maximums)
+        max_r = series_r.max()
+        max_p = series_p.max()
+        factor = 1.0
+        if max_p > 0 and max_r > 0:
+            factor = max_r / max_p
+
+        # Plot erstellen
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(
+            dates,
+            series_r.values,
+            label="Rohdaten",
+            color="C0",
+            marker="o",
+            linewidth=1,
+        )
+        if series_p.sum() > 0:
+            ax.plot(
+                dates,
+                (series_p * factor).values,
+                label=f"Baumarktprogramm (skaliert)",
+                color="C1",
+                linestyle="--",
+                marker="s",
+                linewidth=1,
+            )
+
+        # Formatierung
+        ax.set_title(f"{bm} — Rohdaten vs. Baumarktprogramm")
+        ax.set_xlabel("Monat")
+        ax.set_ylabel("Zahl (Programm skaliert)")
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        ax.legend()
+        ax.grid(alpha=0.3)
+
+        # Speichern
+        safe_name = (
+            "".join(c for c in bm if c.isalnum() or c in (" ", "_", "-"))
+            .strip()
+            .replace(" ", "_")
+        )
+        out_path = os.path.join(out_dir, f"{safe_name}_vergleich.png")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+
+    return
+
 
 def main():
-    # Output-Verzeichnisse erstellen
-    output_dir = "./output"
-    plot_dir = "./output/plots/2"
-    os.makedirs(plot_dir, exist_ok=True)
-    
-    # -----------------------------------------------------------------
-    # Schritt A: Vertriebsplan laden (wird für beide Analysen benötigt)
-    # -----------------------------------------------------------------
-    df_plan = load_sales_plan(
-        plan_filepath="BAUMARKTPROGRAMM.xlsx"
-    )
-    if df_plan is None: 
-        print("Analyse wird beendet, da Vertriebsplan nicht geladen werden konnte.")
-        return
+    print("Abweichungsanalyse - Datenimport")
+    print("=" * 50)
 
-    # -----------------------------------------------------------------
-    # Analyse 1: Vergleich mit PROG_MG1 (Jahr +1)
-    # -----------------------------------------------------------------
-    print("\n--- STARTE ANALYSE FÜR PROG_MG1 (JAHR 1) ---")
-    df_prognosis_1 = load_and_aggregate_prognosis(
-        raw_data_path="rohdaten.xlsx",
-        prog_col='prog_mg1',
-        date_col='progmo'
-    )
-    
-    if df_prognosis_1 is not None:
-        compare_and_visualize_trends(
-            df_prognosis_1, 
-            df_plan, 
-            plot_dir, 
-            output_suffix="_prog1", 
-            top_n=5
-        )
-    else:
-        print("Überspringe Vergleich für prog_mg1, da Daten nicht geladen werden konnten.")
+    rohdaten = load_rohdaten()
+    baumarktprogramm = load_baumarktprogramm()
 
-    # -----------------------------------------------------------------
-    # Analyse 2: Vergleich mit PROG_MG2 (Jahr +2)
-    # -----------------------------------------------------------------
-    print("\n--- STARTE ANALYSE FÜR PROG_MG2 (JAHR 2) ---")
-    df_prognosis_2 = load_and_aggregate_prognosis(
-        raw_data_path="rohdaten.xlsx",
-        prog_col='prog_mg2',
-        date_col='progmo2'
-    )
-    
-    if df_prognosis_2 is not None:
-        compare_and_visualize_trends(
-            df_prognosis_2, 
-            df_plan, 
-            plot_dir, 
-            output_suffix="_prog2", 
-            top_n=5
-        )
-    else:
-        print("Überspringe Vergleich für prog_mg2, da Daten nicht geladen werden konnten.")
+    print("🔬 Abweichungsanalyse - Aufbereitung")
+    print("=" * 50)
+    rohdaten_agg = agg_Rohdaten(rohdaten)
+    os.makedirs("./output", exist_ok=True)
+    rohdaten_agg.to_excel("./output/agg_rohdaten.xlsx", index=False)
+
+    # Export des Baumarktprogramms im langen Format
+    baumarktProgamm_agg = agg_Baumarktprogramm(baumarktprogramm)
+    baumarktProgamm_agg.to_excel("./output/agg_baumarktprogramm.xlsx", index=False)
+
+    # Plot-Vergleich erstellen (Rohdaten vs. Baumarktprogramm), Bilder in ./output/images
+    plot_vergleich_baumarkt(rohdaten_agg, baumarktProgamm_agg, out_dir="./output/plots/2")
+
 
 if __name__ == "__main__":
     main()
-

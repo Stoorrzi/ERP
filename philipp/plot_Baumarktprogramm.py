@@ -120,7 +120,7 @@ def extract_data_for_plotting(df):
 
 def plot_baumarkt_vergleich(plot_data, monate):
     """
-    Erstellt Säulendiagramme für jeden Baumarkt mit Jahresvergleich
+    Erstellt Liniendiagramme für jeden Baumarkt mit durchgehender Zeitlinie
     """
     if not plot_data:
         print("❌ Keine Daten zum Plotten verfügbar")
@@ -136,7 +136,7 @@ def plot_baumarkt_vergleich(plot_data, monate):
     # Figure erstellen
     fig, axes = plt.subplots(rows, cols, figsize=(18, 6 * rows))
     fig.suptitle(
-        "Baumarktprogramm - Jahresvergleich 2025/2026/2027/2028\n(Säulendiagramme)",
+        "Baumarktprogramm - Zeitverlauf 2025-2028\n(Liniendiagramme)",
         fontsize=16,
         fontweight="bold",
     )
@@ -157,9 +157,18 @@ def plot_baumarkt_vergleich(plot_data, monate):
         "2028": "#d62728",  # Rot
     }
 
-    # X-Positionen für die Balken
-    x = np.arange(len(monate))
-    width = 0.2  # Breite der Balken (4 Jahre statt 3)
+    # Durchgehende X-Achse: 48 Monate (4 Jahre × 12 Monate)
+    x_gesamt = list(range(48))  # 0 bis 47
+
+    # Labels für X-Achse (alle 6 Monate)
+    x_labels = []
+    x_ticks = []
+    for jahr_idx, jahr in enumerate(["2025", "2026", "2027", "2028"]):
+        for monat_idx, monat in enumerate(monate):
+            x_pos = jahr_idx * 12 + monat_idx
+            if monat_idx % 6 == 0:  # Alle 6 Monate ein Label
+                x_labels.append(f"{monat} {jahr}")
+                x_ticks.append(x_pos)
 
     baumarkt_names = list(plot_data.keys())
 
@@ -180,28 +189,50 @@ def plot_baumarkt_vergleich(plot_data, monate):
         # Daten für aktuellen Baumarkt
         daten = plot_data[baumarkt]
 
-        # Balken für jedes Jahr plotten
-        for j, jahr in enumerate(["2025", "2026", "2027", "2028"]):
-            offset = (
-                j - 1.5
-            ) * width  # Offset für nebeneinander stehende Balken (4 Jahre)
-            ax.bar(
-                x + offset,
-                daten[jahr],
-                width,
-                label=jahr,
+        # Durchgehende Datenliste erstellen (alle 4 Jahre hintereinander)
+        y_werte = []
+        x_werte = []
+
+        for jahr_idx, jahr in enumerate(["2025", "2026", "2027", "2028"]):
+            for monat_idx in range(12):
+                x_pos = jahr_idx * 12 + monat_idx
+                x_werte.append(x_pos)
+                y_werte.append(daten[jahr][monat_idx])
+
+        # Hauptlinie plotten
+        ax.plot(
+            x_werte,
+            y_werte,
+            linewidth=2,
+            marker="o",
+            markersize=4,
+            color="#1f77b4",
+            label="Zeitverlauf",
+        )
+
+        # Optionale Jahres-Markierungen (verschiedene Farben für Segmente)
+        for jahr_idx, jahr in enumerate(["2025", "2026", "2027", "2028"]):
+            start_idx = jahr_idx * 12
+            end_idx = (jahr_idx + 1) * 12
+            ax.plot(
+                x_werte[start_idx:end_idx],
+                y_werte[start_idx:end_idx],
+                linewidth=3,
+                alpha=0.7,
                 color=farben[jahr],
-                alpha=0.8,
+                label=jahr,
             )
 
         # Plot formatieren
         ax.set_title(f"{baumarkt}", fontsize=14, fontweight="bold")
-        ax.set_xlabel("Monate")
+        ax.set_xlabel("Zeit (2025-2028)")
         ax.set_ylabel("Werte")
-        ax.set_xticks(x)
-        ax.set_xticklabels(monate, rotation=45)
         ax.legend()
         ax.grid(True, alpha=0.3)
+
+        # X-Achse formatieren
+        ax.set_xticks(x_ticks)
+        ax.set_xticklabels(x_labels, rotation=45, ha="right")
 
         # Y-Achse bei 0 beginnen
         ax.set_ylim(bottom=0)
