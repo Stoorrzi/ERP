@@ -4,10 +4,7 @@ import seaborn as sns
 import os
 import numpy as np
 
-# Setzt einen sauberen "Seaborn"-Stil für alle Plots
 sns.set_theme(style="whitegrid")
-
-# --- Schritt 1: Daten laden (Ihr Code) ---
 
 def load_data(filepath="rohdaten.xlsx"):
     """
@@ -17,7 +14,6 @@ def load_data(filepath="rohdaten.xlsx"):
         df_raw = pd.read_excel(filepath)
         print(f"Datei '{filepath}' erfolgreich geladen: {df_raw.shape[0]} Zeilen, {df_raw.shape[1]} Spalten.")
         
-        #'bedmo' in ein echtes Datum umwandeln für die Zeitreihenanalyse
         df_raw['bedmo_date'] = pd.to_datetime(df_raw['bedmo'], format='%Y%m')
         
     except FileNotFoundError:
@@ -29,7 +25,7 @@ def load_data(filepath="rohdaten.xlsx"):
         
     return df_raw
 
-# --- Schritt 2: Effizient Aggregieren (Ihr Code) ---
+# --- Schritt 2: Effizient Aggregieren ---
 
 def aggregate_data(data):
     """
@@ -69,13 +65,13 @@ def aggregate_data(data):
     return df_baumarkt_agg, df_artikelgruppe_agg
 
 
-# --- Schritt 3: Störgrößen erkennen UND Glätten (Ihr Code) ---
+# --- Schritt 3: Störgrößen erkennen UND Glätten  ---
 
 def detect_and_smooth(df_group, metric_col='wavor_bstlmg', window=3):
     """
     VERBESSERTE Version: Findet Ausreißer basierend auf prozentualer Abweichung.
     """
-    df_group = df_group.copy() # Verhindert SettingWithCopyWarning
+    df_group = df_group.copy()
     
     df_group['moving_avg'] = df_group[metric_col].rolling(window=window, center=True, min_periods=1).mean()
     df_group['pct_diff'] = (df_group[metric_col] - df_group['moving_avg']) / df_group['moving_avg']
@@ -91,7 +87,7 @@ def detect_and_smooth(df_group, metric_col='wavor_bstlmg', window=3):
     
     return df_group
 
-# --- Schritt 4: NEUE PLOT-FUNKTIONEN FÜR DIE PRÄSENTATION ---
+# --- Schritt 4: PLOT-FUNKTIONEN FÜR DIE PRÄSENTATION ---
 
 def plot_task_trends(df_baumarkt_agg, output_dir):
     """
@@ -139,8 +135,6 @@ def plot_task_seasonality(df_artikelgruppe_agg, output_dir):
     # CV = Standardabweichung / Mittelwert. fillna(0) falls mean = 0
     df_volatility['cv'] = (df_volatility['std_dev'] / df_volatility['mean_val']).fillna(0)
     
-    # Filtere sehr kleine Gruppen heraus (z.B. Mean < 100), da ihre CV nicht aussagekräftig ist
-    # Ein Artikel, der 1, 0, 1, 0 verkauft, hat eine riesige CV, ist aber irrelevant.
     df_volatility = df_volatility[df_volatility['mean_val'] > 100] # Schwellenwert ggf. anpassen!
 
     # Finde die Top 5 Gruppen mit der höchsten Schwankung (CV)
@@ -153,8 +147,8 @@ def plot_task_seasonality(df_artikelgruppe_agg, output_dir):
         data=df_top_groups,
         x='bedmo_date',
         y='wavor_bstlmg',
-        hue='Baumarktartikel', # Eine Farbe pro Gruppe
-        style='Baumarktartikel', # Ein Linien-Stil pro Gruppe
+        hue='Baumarktartikel', 
+        style='Baumarktartikel', 
         linewidth=2,
         markers=True
     )
@@ -186,7 +180,7 @@ def plot_task_outliers(df_baumarkt_smoothed, output_dir):
     example_group_name = outlier_counts.index[0]
     df_group = df_baumarkt_smoothed[df_baumarkt_smoothed['Baumarkt'] == example_group_name]
     
-    # (Dieser Plot-Code ist eine saubere Version von Ihrer alten plot_smoothing_results)
+    
     df_plot = df_group.copy()
     outliers = df_plot[df_plot['is_outlier']]
 
@@ -213,7 +207,7 @@ def plot_task_outliers(df_baumarkt_smoothed, output_dir):
     plt.close()
 
 
-# --- NEUE FUNKTION: Plot 4 (Ihr Wunsch) ---
+# --- NEUE FUNKTION: Plot 4  ---
 
 def plot_task_trends_per_baumarkt(df_baumarkt_agg, output_dir, top_n=10):
     """
@@ -222,7 +216,6 @@ def plot_task_trends_per_baumarkt(df_baumarkt_agg, output_dir, top_n=10):
     """
     print(f"Erstelle Plot: 4_Top_{top_n}_Baumarkt_Trends.png")
     
-    # Finde die Top N Baumärkte nach Gesamtvolumen
     top_baumaerkte = df_baumarkt_agg.groupby('Baumarkt')['wavor_bstlmg'].sum().nlargest(top_n).index
     df_top_baumaerkte = df_baumarkt_agg[df_baumarkt_agg['Baumarkt'].isin(top_baumaerkte)]
     
@@ -231,8 +224,8 @@ def plot_task_trends_per_baumarkt(df_baumarkt_agg, output_dir, top_n=10):
         data=df_top_baumaerkte,
         x='bedmo_date',
         y='wavor_bstlmg',
-        hue='Baumarkt', # Eine Farbe pro Baumarkt
-        style='Baumarkt', # Ein Linien-Stil pro Baumarkt
+        hue='Baumarkt', 
+        style='Baumarkt', 
         linewidth=2,
         markers=True
     )
@@ -248,7 +241,6 @@ def plot_task_trends_per_baumarkt(df_baumarkt_agg, output_dir, top_n=10):
     plt.close()
 
 
-# --- Haupt-Logik ---
 
 def main():
     # Output-Verzeichnisse erstellen
@@ -284,11 +276,10 @@ def main():
     # Plot 3: Ausreißer / Störgrößen
     plot_task_outliers(df_baumarkt_smoothed, plot_dir)
     
-    # Plot 4: Trends pro Baumarkt (NEU)
+    # Plot 4: Trends pro Baumarkt
     plot_task_trends_per_baumarkt(df_baumarkt_agg, plot_dir, top_n=10)
     
     print(f"\nAlle Analyse-Plots wurden im Ordner '{plot_dir}' gespeichert.")
-    print("Verwenden Sie diese PNG-Dateien für Ihre Präsentation.")
 
 if __name__ == "__main__":
     main()

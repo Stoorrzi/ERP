@@ -168,7 +168,6 @@ def agg_Baumarktprogramm(data):
     }
 
     rows = []
-    # Annahme: erste Spalte enthält Baumarkt-Namen
     for _, row in data.iterrows():
         baumarkt = row.iloc[0]
         if pd.isna(baumarkt):
@@ -230,11 +229,10 @@ def plot_vergleich_baumarkt(rohdaten_agg, baumarkt_prog, out_dir="./output/image
     )
 
     def _to_datetime_month(series):
-        # robustes Konvertieren von Monat (JJJJMM) in datetime (erster Tag im Monat)
+        # Konvertieren von Monat (JJJJMM) in datetime (erster Tag im Monat)
         s = series.dropna().astype(str).str.strip()
         s = s.str.replace(r"\.0$", "", regex=True)
         s = s[s.str.match(r"^\d{6}$")]
-        # map back to original index
         result = pd.to_datetime(
             series.astype(str).str.replace(r"\.0$", "", regex=True),
             format="%Y%m",
@@ -369,7 +367,6 @@ def main():
     baumarktProgamm_agg = agg_Baumarktprogramm(baumarktprogramm)
     baumarktProgamm_agg.to_excel("./output/agg_baumarktprogramm.xlsx", index=False)
 
-    # Plot-Vergleich erstellen (Rohdaten vs. Baumarktprogramm), Bilder in ./output/images
     plot_vergleich_baumarkt(rohdaten_agg, baumarktProgamm_agg, out_dir="./output/plots/2")
 
 
